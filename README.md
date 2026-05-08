@@ -33,32 +33,32 @@ CPU; no cherry-picking. The `.wav` source files are also in
 **Basic Nepali greeting**
 > नमस्ते, मेरो नाम नोवा हो। म एउटा robot हुँ।
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/01_basic.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/01_basic.mp4" controls></video>
 
 **Nepanglish — mixed scripts**
 > यो robot को speed बढाउ। AC अन गर र light off गर।
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/02_nepanglish.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/02_nepanglish.mp4" controls></video>
 
 **Pure English (read with a Nepali accent)**
 > Hello, how are you doing today?
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/03_pure_english.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/03_pure_english.mp4" controls></video>
 
 **Numbers — both Devanagari and Latin numerals get spelled out**
 > आज २०२४ साल हो। मसँग 1500 रुपैयाँ छ।
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/04_numbers.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/04_numbers.mp4" controls></video>
 
 **Long real-world Nepanglish — streamed sentence by sentence**
 > नेपाली र अङ्ग्रेजी शब्दहरू मिसाएर बोलिने भाषालाई प्रायः Neplish भनिन्छ, जुन आजभोलि हाम्रो दैनिक conversation मा एकदमै common भइसकेको छ। यदि हामीले आफ्नो time लाई सही तरिकाले manage गरेनौं भने, भविष्यमा धेरै problems फेस गर्नुपर्ने हुन सक्छ।
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/05_streaming_long.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/05_streaming_long.mp4" controls></video>
 
 **Messy punctuation cleaned up before synthesis**
 > She said "hello" — then left… नमस्ते।
 
-<video src="https://github.com/nischaljs/nepanglish-tts/raw/main/samples/06_punctuation.mp4" controls></video>
+<video src="https://github.com/nischaljs/nepanglish-tts/releases/download/samples-v1/06_punctuation.mp4" controls></video>
 
 To re-render these locally (e.g. after editing prosody or the seed
 dict), run `python scripts/generate_samples.py`.
