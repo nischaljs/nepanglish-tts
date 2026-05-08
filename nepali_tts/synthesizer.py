@@ -24,6 +24,8 @@ import numpy as np
 import sherpa_onnx
 
 from . import config
+from .numbers import numbers_to_nepali
+from .preprocess import normalize_punctuation
 from .resampler import StreamingResampler
 from .transliterator import nepanglish_to_devanagari
 
@@ -170,10 +172,19 @@ class NepaliSynthesizer:
         if not text or not text.strip():
             return
 
-        # Step 1: English → Devanagari (so the Nepali phonemizer doesn't gag)
-        # Step 2: split long sentences on commas/colons (so the first audible
-        #         chunk arrives sooner)
-        clean_text = nepanglish_to_devanagari(text)
+        # The full preprocessing pipeline. Each step is one focused
+        # transformation; order matters.
+        #
+        #   1. Normalize weird punctuation (smart quotes, ellipses,
+        #      zero-width chars) — paste from anywhere becomes safe input.
+        #   2. Spell out digit runs in Nepali — '2024' → 'दुई हजार चौबीस'.
+        #   3. Phonetically transliterate Latin words to Devanagari —
+        #      'robot' → 'रोबोट'.
+        #   4. Split long sentences on soft punctuation so streaming
+        #      starts emitting audio sooner.
+        clean_text = normalize_punctuation(text)
+        clean_text = numbers_to_nepali(clean_text)
+        clean_text = nepanglish_to_devanagari(clean_text)
         clean_text = _split_for_streaming(clean_text, config.MAX_CHUNK_CHARS)
         log.debug("synth input  : %r", text)
         log.debug("synth cleaned: %r", clean_text)

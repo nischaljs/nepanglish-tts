@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import config
+from .loanwords import SEED_LOANWORDS
 
 log = logging.getLogger(__name__)
 
@@ -145,27 +146,33 @@ def _load_engine():
 
 @lru_cache(maxsize=2048)
 def _transliterate_word(word: str) -> str:
-    """Per-word lookup with two layers of caching:
+    """Per-word lookup with three layers, cheapest first:
 
-    1. lru_cache (this decorator) — in-process, super fast.
-    2. JSON file on disk — survives restarts, so the second time you ever
-       run this project you don't pay the XlitEngine cost for words you've
-       already used.
+    1. SEED_LOANWORDS — hand-curated dict (`loanwords.py`). Wins always,
+       because its entries are reviewed and shouldn't drift.
+    2. lru_cache + JSON disk cache — runtime-built from past model output;
+       survives restarts.
+    3. ai4bharat XlitEngine — heavy fallback for novel words. Whatever it
+       returns becomes a layer-2 entry from then on.
 
     Loanwords like 'robot' / 'AC' / 'project' recur constantly in real
-    Nepanglish, so even a few hundred cached entries hit ~100% of repeat
-    traffic.
+    Nepanglish, so the seed alone covers most traffic.
     """
     global _disk_cache_dirty
     key = word.lower()
 
-    # --- layer 2: disk cache --------------------------------------------
+    # --- layer 1: hand-curated seed ------------------------------------
+    seeded = SEED_LOANWORDS.get(key)
+    if seeded is not None:
+        return seeded
+
+    # --- layer 2: disk cache -------------------------------------------
     _load_disk_cache()
     cached = _disk_cache.get(key)
     if cached is not None:
         return cached
 
-    # --- layer 3: actually run the model --------------------------------
+    # --- layer 3: actually run the model -------------------------------
     engine = _load_engine()
     if engine is None:
         return word
