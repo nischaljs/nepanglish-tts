@@ -180,7 +180,9 @@ in order:
    trip over exotic unicode and spell things out as English.
 
 2. **Spell out numbers.** `2024` becomes `दुई हजार चौबीस`, `१२३` becomes
-   `एक सय तेइस`. Catches both Latin and Devanagari numerals.
+   `एक सय तेइस`. Catches both Latin and Devanagari numerals. Decimals
+   (`3.14` → `तीन दशमलव एक चार`) and phone-number-like sequences
+   (`9841-123456` → digit-by-digit) are detected too.
 
 3. **Fix English words.** The voice model only reads Devanagari. So we
    replace each English token with its phonetic Devanagari form first.

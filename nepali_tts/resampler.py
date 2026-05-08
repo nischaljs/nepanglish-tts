@@ -27,21 +27,31 @@ class StreamingResampler:
         in_rate: int = config.NATIVE_SAMPLE_RATE,
         out_rate: int = config.TARGET_SAMPLE_RATE,
     ):
-        self._stream = soxr.ResampleStream(
-            in_rate=in_rate,
-            out_rate=out_rate,
-            num_channels=1,
-            dtype="float32",
-            quality="HQ",
-        )
+        # When the rates match there's nothing to do — fast-path returns
+        # incoming chunks unchanged. Saves ~5-10ms/chunk and avoids
+        # creating a soxr stream we'd never use.
+        self._passthrough = in_rate == out_rate
+        self._stream = None
+        if not self._passthrough:
+            self._stream = soxr.ResampleStream(
+                in_rate=in_rate,
+                out_rate=out_rate,
+                num_channels=1,
+                dtype="float32",
+                quality="HQ",
+            )
 
     def push(self, chunk: np.ndarray) -> np.ndarray:
         """Feed a chunk in, get the corresponding resampled output. The
         stream remembers phase across calls so consecutive pushes line up."""
+        if self._passthrough:
+            return chunk
         return self._stream.resample_chunk(chunk, last=False)
 
     def flush(self) -> np.ndarray:
         """Drain the filter's tail. Call once after the final push()."""
+        if self._passthrough:
+            return np.zeros(0, dtype=np.float32)
         return self._stream.resample_chunk(
             np.zeros(0, dtype=np.float32), last=True
         )
@@ -49,6 +59,8 @@ class StreamingResampler:
     def resample_full(self, audio: np.ndarray) -> np.ndarray:
         """Single-shot helper: resample one complete utterance. Equivalent
         to push() + flush() concatenated."""
+        if self._passthrough:
+            return audio
         body = self.push(audio)
         tail = self.flush()
         return np.concatenate([body, tail]) if tail.size else body

@@ -46,6 +46,19 @@ _TABLE: dict[int, str] = {
 }
 
 _DEV_DIGITS = "०१२३४५६७८९"
+# How long a continuous digit run has to be before we read it digit-by-
+# digit instead of as a single number. A Nepali mobile number is 10
+# digits, so 10 is the natural cutoff. Reading 1,234,567 (1.2 million)
+# digit-by-digit would be wrong, but a hyphenated 9841-123456 is almost
+# always a phone — that case is handled separately.
+_LONG_NUMBER_DIGITS = 10
+
+
+def _digit_value(ch: str) -> int:
+    """Single-character digit lookup. Works for ASCII or Devanagari."""
+    if ch in _DEV_DIGITS:
+        return _DEV_DIGITS.index(ch)
+    return int(ch)
 
 
 def _to_int(s: str) -> int:
@@ -53,11 +66,15 @@ def _to_int(s: str) -> int:
     a mix — useful because LLM output sometimes mixes both scripts."""
     out = 0
     for ch in s:
-        if ch in _DEV_DIGITS:
-            out = out * 10 + _DEV_DIGITS.index(ch)
-        else:
-            out = out * 10 + int(ch)
+        out = out * 10 + _digit_value(ch)
     return out
+
+
+def _digits_one_by_one(s: str) -> str:
+    """Read each digit individually: '9841' → 'नौ आठ चार एक'.
+    Anything that isn't a digit (hyphens, plus signs, etc.) is dropped.
+    Used for phone numbers and long IDs where the value is meaningless."""
+    return " ".join(_TABLE[_digit_value(c)] for c in s if c.isdigit() or c in _DEV_DIGITS)
 
 
 def number_to_words(n: int) -> str:
@@ -98,23 +115,54 @@ def number_to_words(n: int) -> str:
     return out
 
 
-# Match runs of digits in either script. We don't try to detect dotted
-# decimals or grouped numbers like "1,234" — phone numbers and IDs
-# would be misread anyway. Keep scope tight.
-_NUMBER_RUN = re.compile(r"[0-9०-९]+")
+# Match a number-ish token: integers, decimals (1.5), and hyphenated
+# digit sequences (phone numbers like 9841-123456 or +977-9841-123456).
+# Anatomy:
+#   \+?                         optional leading + (country codes)
+#   [0-9०-९]+                   first run of digits
+#   (?:[-.][0-9०-९]+)*           zero or more more runs joined by - or .
+_NUMBER_TOKEN = re.compile(r"\+?[0-9०-९]+(?:[-.][0-9०-९]+)*")
+
+
+def _convert_token(s: str) -> str:
+    """Decide how to read one matched token. Three cases:
+    1. Phone-like (has hyphens, or 10+ contiguous digits): one-by-one.
+    2. Decimal (has a single '.', no hyphens): X दशमलव d d d.
+    3. Plain integer: convert to Nepali words.
+    """
+    plus = s.startswith("+")
+    body = s[1:] if plus else s
+
+    has_hyphen = "-" in body
+    digits_only = "".join(c for c in body if c.isdigit() or c in _DEV_DIGITS)
+
+    # Case 1: phone / long ID — read each digit. Hyphenated tokens always
+    # qualify; un-hyphenated tokens qualify if they're 10+ digits long.
+    if has_hyphen or len(digits_only) >= _LONG_NUMBER_DIGITS:
+        words = _digits_one_by_one(body)
+        return ("प्लस " + words) if plus else words
+
+    # Case 2: decimal. Whole part as a number, fractional as digits.
+    if "." in body:
+        whole, frac = body.split(".", 1)
+        whole_words = number_to_words(_to_int(whole)) if whole else "शून्य"
+        frac_words = _digits_one_by_one(frac)
+        return f"{whole_words} दशमलव {frac_words}"
+
+    # Case 3: plain integer.
+    return number_to_words(_to_int(body))
 
 
 def numbers_to_nepali(text: str) -> str:
-    """Replace every digit run in `text` with its Nepali spelling.
+    """Replace every numeric token in `text` with its Nepali spelling.
 
     >>> numbers_to_nepali('आज २०२४ साल हो।')
     'आज दुई हजार चौबीस साल हो।'
-    >>> numbers_to_nepali('Room 101 मा छु।')
-    'Room एक सय एक मा छु।'
+    >>> numbers_to_nepali('मेरो number 9841-123456 हो।')
+    'मेरो number नौ आठ चार एक एक दुई तीन चार पाँच छ हो।'
+    >>> numbers_to_nepali('यो 3.14 हो।')
+    'यो तीन दशमलव एक चार हो।'
     """
     if not text:
         return text
-    return _NUMBER_RUN.sub(
-        lambda m: number_to_words(_to_int(m.group(0))),
-        text,
-    )
+    return _NUMBER_TOKEN.sub(lambda m: _convert_token(m.group(0)), text)
