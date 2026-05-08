@@ -27,13 +27,19 @@ speak("Robot को speed बढाउ")        # mixed English + Nepali — wor
 That's the whole API. `speak(text)` is the function you asked for.
 
 If you ever need just the raw audio (without playing it — e.g. to send it
-somewhere else), use this instead:
+somewhere else), there are two ways:
 
 ```python
 from nepali_tts import get_synthesizer
-
 synth = get_synthesizer()
-audio = synth.synthesize("कस्तो छ?")   # numpy array of sound samples
+
+# Single-shot — wait for the whole reply, get one big numpy array.
+audio = synth.synthesize("कस्तो छ?")
+
+# Streaming — get chunks as the model finishes each sentence.
+# This is what the production WebSocket path will use.
+for chunk in synth.synthesize_stream("कस्तो छ?"):
+    send_to_esp32(chunk)   # or whatever you want to do per-chunk
 ```
 
 ## What's happening under the hood (the simple version)
@@ -63,6 +69,37 @@ order:
 4. **Play.** We send the sound to your laptop speakers.
    *(On the real robot, this step instead sends the sound over the network
    to the speaker — same code up to step 3, only the last step changes.)*
+
+### The streaming part
+
+Steps 2 → 4 don't run one-after-another for the whole reply. They run
+**sentence by sentence**, in parallel:
+
+```
+  sentence 1: synth ───► resample ───► play (you hear it!)
+                                              │
+  sentence 2:    synth ───► resample ───► play (queued behind 1)
+                                              │
+  sentence 3:           synth ───► resample ───► play (queued behind 2)
+```
+
+So the robot starts speaking the first sentence the moment it's ready,
+while the second is still being generated in the background. This shaves a
+lot off the awkward "thinking silence" before the robot starts talking —
+especially for longer multi-sentence replies.
+
+If you want to see this happen with your own eyes, the test REPL prints
+timestamped logs:
+
+```
+21:43:56.691  synth  chunk 1 ready
+21:43:56.695  player chunk 1 playing      ← starts playing 4ms later
+21:43:59.498  synth  chunk 2 ready        ← chunk 1 still being heard
+21:43:59.503  player chunk 2 playing
+```
+
+If streaming wasn't on, you'd see all three `synth` lines first, then all
+three `player` lines after.
 
 ## What's in the project folder
 

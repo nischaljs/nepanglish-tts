@@ -20,15 +20,21 @@ def get_synthesizer() -> NepaliSynthesizer:
 def speak(text: str) -> None:
     """Synthesize `text` and play it through the default audio device.
 
+    Streams: the first sentence starts playing as soon as it's synthesized,
+    while later sentences are still being generated. So the time-to-first-
+    sound is the synthesis time of sentence 1, not of the whole utterance.
+
     Accepts pure Nepali, pure English, or any Nepanglish mix — Latin tokens
     get phonetically transliterated to Devanagari before they reach the
     acoustic model.
     """
-    from .player import play
+    from .player import play_stream
 
     synth = get_synthesizer()
-    audio = synth.synthesize(text)
-    play(audio, sample_rate=synth.output_sample_rate)
+    play_stream(
+        synth.synthesize_stream(text),
+        sample_rate=synth.output_sample_rate,
+    )
 
 
 __all__ = ["speak", "get_synthesizer", "NepaliSynthesizer"]

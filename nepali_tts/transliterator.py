@@ -51,6 +51,18 @@ def _patch_torch_load_for_fairseq():
     torch.load = patched  # type: ignore[assignment]
 
 
+def _silence_fairseq_logs():
+    """fairseq prints a flood of INFO lines on every translit call (batch
+    sampler timings, dataset loads, etc). Useful in research, noise here.
+    Bump it to WARNING so only real problems break through."""
+    for name in (
+        "fairseq",
+        "fairseq.tasks.translation_multi_simple_epoch",
+        "fairseq.data.multilingual.multilingual_data_manager",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def _load_engine():
     """First call pays the model load cost (~1-2s plus a one-time download
     on the very first run). Returns None if ai4bharat isn't installed; the
@@ -60,6 +72,7 @@ def _load_engine():
         return _engine
     try:
         _patch_torch_load_for_fairseq()
+        _silence_fairseq_logs()
         from ai4bharat.transliteration import XlitEngine
     except ImportError:
         log.warning(

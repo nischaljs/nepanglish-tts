@@ -16,8 +16,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from nepali_tts import get_synthesizer, speak  # noqa: E402
 
-# Quiet by default; flip to DEBUG if you want to see the cleaned text.
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# Millisecond wall-clock prefix makes streaming visible at a glance:
+# you can see "synth chunk 1 ready" arrive *before* "play chunk 1" finishes.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s.%(msecs)03d  %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 BANNER = """\
 Nepali TTS test REPL

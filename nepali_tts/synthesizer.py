@@ -4,9 +4,20 @@ Wraps sherpa-onnx (the runtime) running a Piper VITS model (the voice).
 Sherpa is dramatically faster than the standalone Piper Python package on
 ARM CPUs because it executes the ONNX graph through optimized C++ with
 NEON SIMD, and it's stable for long-lived processes.
+
+Two synthesis APIs:
+  - synthesize(text)           -> full audio array (single-shot)
+  - synthesize_stream(text)    -> generator yielding chunks as they're ready
+
+The streaming version is what production wants: it starts emitting audio
+sentence-by-sentence as the model finishes each one, instead of making the
+listener wait for the whole utterance.
 """
 
 import logging
+import queue
+import threading
+from typing import Iterator
 
 import numpy as np
 import sherpa_onnx
@@ -55,10 +66,11 @@ class NepaliSynthesizer:
                 provider="cpu",
                 debug=False,
             ),
-            # Cap how many sentences sherpa will batch internally. Keeping
-            # this small bounds memory use; we handle long inputs sentence
-            # by sentence anyway.
-            max_num_sentences=2,
+            # One sentence per internal batch. This is what makes streaming
+            # responsive — sherpa fires our callback after each sentence
+            # instead of bundling several together. Bigger values trade
+            # latency for slightly better throughput; we want latency.
+            max_num_sentences=1,
             # Silence injected after sentence-final punctuation. Without
             # this, multi-sentence responses sound rushed.
             silence_scale=config.SILENCE_SCALE,
@@ -81,26 +93,79 @@ class NepaliSynthesizer:
         return self._engine.sample_rate
 
     def synthesize(self, text: str) -> np.ndarray:
-        """Render `text` into a 1-D float32 waveform at TARGET_SAMPLE_RATE.
+        """Single-shot: render `text` into a 1-D float32 waveform at
+        TARGET_SAMPLE_RATE. Blocks until the whole thing is ready.
 
-        Steps: transliterate any English → Devanagari, run the VITS model,
-        resample 22050 → 24000 so the output matches what the ESP32 expects.
+        Use this when you need the complete audio (saving to a file, etc).
+        For playback or network streaming, prefer synthesize_stream().
+        """
+        chunks = list(self.synthesize_stream(text))
+        return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+
+    def synthesize_stream(self, text: str) -> Iterator[np.ndarray]:
+        """Streaming generator: yield resampled audio chunks as the model
+        finishes each sentence. The first chunk is available as soon as
+        sentence 1 is done — the listener doesn't wait for the whole reply.
+
+        Each yielded chunk is a 1-D float32 array at TARGET_SAMPLE_RATE.
+        Pass them straight to a sounddevice OutputStream, a WebSocket, or
+        wherever they need to go.
         """
         if not text or not text.strip():
-            return np.zeros(0, dtype=np.float32)
+            return
 
         clean_text = nepanglish_to_devanagari(text)
         log.debug("synth input  : %r", text)
         log.debug("synth cleaned: %r", clean_text)
 
-        # sid=0 → first (and only) speaker for this single-speaker model.
-        # speed=1.0 here because we already control pace via length_scale.
-        result = self._engine.generate(clean_text, sid=0, speed=1.0)
-        raw = np.asarray(result.samples, dtype=np.float32)
-
-        # Resample to the rate the rest of the pipeline expects.
+        # Stateful per utterance — fresh phase, no carry-over from the
+        # previous call.
         resampler = StreamingResampler(
-            in_rate=result.sample_rate,
+            in_rate=self._engine.sample_rate,
             out_rate=config.TARGET_SAMPLE_RATE,
         )
-        return resampler.resample_full(raw)
+
+        # The trick: sherpa.generate() blocks until done, but it fires our
+        # callback from a background thread mid-synthesis. So we run
+        # generate() in a thread and bridge to the main thread with a
+        # queue. The main thread can pull chunks the moment they arrive.
+        chunk_q: "queue.Queue[np.ndarray | object]" = queue.Queue(maxsize=32)
+        DONE = object()  # sentinel — pushed when synthesis is finished
+
+        chunk_idx = 0
+
+        def _callback(samples, progress):
+            nonlocal chunk_idx
+            chunk = resampler.push(np.asarray(samples, dtype=np.float32))
+            if chunk.size:
+                chunk_idx += 1
+                log.info(
+                    "synth  chunk %d ready  %.2fs of audio  progress=%.2f",
+                    chunk_idx,
+                    chunk.size / config.TARGET_SAMPLE_RATE,
+                    progress,
+                )
+                chunk_q.put(chunk)
+            return 1  # 0 would abort the rest of the utterance
+
+        def _run():
+            try:
+                self._engine.generate(clean_text, sid=0, speed=1.0, callback=_callback)
+                tail = resampler.flush()
+                if tail.size:
+                    chunk_q.put(tail)
+                log.info("synth  done")
+            except Exception as e:
+                log.exception("synthesis worker crashed: %s", e)
+            finally:
+                chunk_q.put(DONE)
+
+        worker = threading.Thread(target=_run, name="tts-synth", daemon=True)
+        worker.start()
+
+        while True:
+            item = chunk_q.get()
+            if item is DONE:
+                break
+            yield item  # type: ignore[misc]
+        worker.join()
