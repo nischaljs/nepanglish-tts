@@ -1,0 +1,5 @@
+[tools]
+# fairseq 0.12.2 (transitive dep of ai4bharat-transliteration) trips the
+# strict @dataclass mutable-default check that became enforced in Python
+# 3.11+, so we pin 3.10 — the last version where fairseq imports cleanly.
+python = "3.10"

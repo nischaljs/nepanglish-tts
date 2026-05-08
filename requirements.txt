@@ -1,0 +1,17 @@
+# Core: the TTS runtime and the Piper VITS model loader.
+sherpa-onnx>=1.10.0
+
+# Phase-preserving streaming resampler (22050 → 24000). Has NEON-optimized
+# wheels for ARM, so the same package works on the laptop and the Pi.
+soxr>=0.3.7
+
+# Local audio playback for the test REPL. Not needed in production where
+# audio leaves the box over WebSocket.
+sounddevice>=0.4.6
+
+numpy>=1.24.0
+
+# English → Devanagari transliteration. Pulls in PyTorch as a dependency,
+# which is the heaviest thing in this requirements file. If you ever want
+# to slim down, this is the first candidate to swap out.
+ai4bharat-transliteration>=1.1.3

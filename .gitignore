@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Downloaded model files — fetched by scripts/download_model.py
+models/
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
