@@ -1,0 +1,17 @@
+# CPU-only PyTorch. Pin torch from the CPU index *before* installing
+# the main requirements.txt — otherwise ai4bharat-transliteration's
+# transitive dep resolution will pull the default CUDA build (~2 GB of
+# nvidia-* libraries we never use on a CPU-only box).
+#
+# Usage:
+#   pip install -r requirements-cpu.txt
+#   pip install -r requirements.txt
+#
+# This is the right setup for: Raspberry Pi, MacBooks, any laptop you
+# don't actually have an NVIDIA GPU on. Skip this file if you *want* the
+# GPU-enabled torch.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.0,<3.0
+torchaudio>=2.0,<3.0

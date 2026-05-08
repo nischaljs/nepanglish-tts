@@ -11,7 +11,8 @@ sounddevice>=0.4.6
 
 numpy>=1.24.0
 
-# English → Devanagari transliteration. Pulls in PyTorch as a dependency,
-# which is the heaviest thing in this requirements file. If you ever want
-# to slim down, this is the first candidate to swap out.
+# English → Devanagari transliteration. Drags in PyTorch + fairseq.
+# IMPORTANT: install this *after* a CPU-only torch (see requirements-cpu.txt
+# or the README) — otherwise pip pulls the default CUDA build, which is
+# ~2 GB of GPU libraries we never use on a CPU-only box like the Pi.
 ai4bharat-transliteration>=1.1.3

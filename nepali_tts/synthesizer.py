@@ -16,6 +16,7 @@ listener wait for the whole utterance.
 
 import logging
 import queue
+import re
 import threading
 from typing import Iterator
 
@@ -27,6 +28,43 @@ from .resampler import StreamingResampler
 from .transliterator import nepanglish_to_devanagari
 
 log = logging.getLogger(__name__)
+
+
+# Sentence terminators sherpa-onnx already splits on. We split there too
+# when probing whether a sentence is "long enough to need a sub-split".
+_HARD_END = re.compile(r"(?<=[।.!?])\s+")
+# Soft splits we'll promote to hard splits inside long sentences. Comma,
+# semicolon, colon, em-dash, en-dash followed by whitespace. We *consume*
+# the soft punctuation rather than keep it — leaving "X,।" looks weird.
+_SOFT_SPLIT = re.compile(r"[,;:—–]\s+")
+
+
+def _split_for_streaming(text: str, max_chars: int) -> str:
+    """Return `text` rewritten so no contiguous sentence is longer than
+    `max_chars`. We achieve that by replacing soft punctuation (commas,
+    colons, dashes) inside over-long sentences with `। ` so the engine
+    breaks the chunk earlier and the listener hears audio sooner.
+
+    Trade-off: a comma-injected break gets a sentence-length pause, which
+    can sound a touch heavier than a real comma. For a robot voice where
+    fast-first-word matters more than literary rhythm, that's a fair price.
+
+    Set max_chars to 0 to disable.
+    """
+    if not max_chars or max_chars <= 0:
+        return text
+    sentences = _HARD_END.split(text)
+    out = []
+    for s in sentences:
+        if len(s) <= max_chars:
+            out.append(s)
+            continue
+        # Sentence is over budget — promote its soft splits to hard ones.
+        # We don't try to be clever about which commas to promote; every
+        # one becomes a break, which over-splits some sentences but keeps
+        # the logic dead simple and the audio still sounds natural.
+        out.append(_SOFT_SPLIT.sub("। ", s))
+    return " ".join(out)
 
 
 class NepaliSynthesizer:
@@ -45,17 +83,31 @@ class NepaliSynthesizer:
     # ---- model construction ---------------------------------------------
 
     @staticmethod
-    def _build_engine() -> sherpa_onnx.OfflineTts:
-        if not config.ACOUSTIC_MODEL.exists():
+    def _find_acoustic_model():
+        """The fp32, int8 and fp16 archives all use slightly different
+        .onnx filenames inside, so glob instead of hard-coding."""
+        if not config.MODEL_DIR.exists():
             raise FileNotFoundError(
-                f"Model not found at {config.ACOUSTIC_MODEL}.\n"
+                f"Model directory missing at {config.MODEL_DIR}.\n"
                 f"Run `python scripts/download_model.py` first."
             )
+        candidates = sorted(config.MODEL_DIR.glob("*.onnx"))
+        if not candidates:
+            raise FileNotFoundError(
+                f"No .onnx file found inside {config.MODEL_DIR} — the "
+                f"archive may have unpacked incompletely. Try deleting "
+                f"the directory and re-running download_model.py."
+            )
+        return candidates[0]
+
+    @classmethod
+    def _build_engine(cls) -> sherpa_onnx.OfflineTts:
+        acoustic_model = cls._find_acoustic_model()
 
         tts_config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(
                 vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                    model=str(config.ACOUSTIC_MODEL),
+                    model=str(acoustic_model),
                     tokens=str(config.TOKENS),
                     data_dir=str(config.ESPEAK_DATA),
                     length_scale=config.LENGTH_SCALE,
@@ -82,7 +134,11 @@ class NepaliSynthesizer:
                 "corrupt or mismatched. Try re-running download_model.py."
             )
 
-        log.info("loading Nepali TTS model from %s", config.MODEL_DIR)
+        log.info(
+            "loading Nepali TTS model from %s (%s)",
+            config.MODEL_DIR,
+            acoustic_model.name,
+        )
         return sherpa_onnx.OfflineTts(tts_config)
 
     # ---- the actual synthesis -------------------------------------------
@@ -114,7 +170,11 @@ class NepaliSynthesizer:
         if not text or not text.strip():
             return
 
+        # Step 1: English → Devanagari (so the Nepali phonemizer doesn't gag)
+        # Step 2: split long sentences on commas/colons (so the first audible
+        #         chunk arrives sooner)
         clean_text = nepanglish_to_devanagari(text)
+        clean_text = _split_for_streaming(clean_text, config.MAX_CHUNK_CHARS)
         log.debug("synth input  : %r", text)
         log.debug("synth cleaned: %r", clean_text)
 

@@ -38,7 +38,8 @@ def _report_progress(block_num: int, block_size: int, total_size: int) -> None:
 def main() -> int:
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if config.MODEL_DIR.exists() and config.ACOUSTIC_MODEL.exists():
+    # Already present and unpacked? No-op.
+    if config.MODEL_DIR.exists() and any(config.MODEL_DIR.glob("*.onnx")):
         print(f"Model already present at {config.MODEL_DIR} — nothing to do.")
         return 0
 

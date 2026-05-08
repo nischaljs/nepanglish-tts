@@ -15,9 +15,14 @@ passthrough if it isn't available — Latin text will sound rough but the
 Devanagari portions of the input still synthesize fine.
 """
 
+import json
 import logging
 import re
+import threading
 from functools import lru_cache
+from pathlib import Path
+
+from . import config
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +32,52 @@ _LATIN_RUN = re.compile(r"[A-Za-z]+")
 
 _engine = None
 _engine_unavailable = False  # set once we know it can't be loaded
+
+# Persistent disk cache: { english_word_lowercase: devanagari_form }.
+# Survives process restarts, so once you've said "conversation" once,
+# every future session pronounces it instantly without touching the
+# heavy XlitEngine again. Stored next to the models so it travels with
+# any user's setup.
+CACHE_PATH = config.MODELS_DIR / "translit_cache.json"
+_disk_cache: dict[str, str] = {}
+_disk_cache_loaded = False
+_disk_cache_dirty = False
+_cache_lock = threading.Lock()
+
+
+def _load_disk_cache():
+    """Read the cache from disk into memory. Idempotent."""
+    global _disk_cache, _disk_cache_loaded
+    if _disk_cache_loaded:
+        return
+    _disk_cache_loaded = True
+    if not CACHE_PATH.exists():
+        return
+    try:
+        with open(CACHE_PATH, encoding="utf-8") as f:
+            _disk_cache = json.load(f)
+        log.info("loaded %d cached transliterations from %s",
+                 len(_disk_cache), CACHE_PATH)
+    except Exception as e:
+        log.warning("transliteration cache load failed (%s) — starting fresh", e)
+        _disk_cache = {}
+
+
+def _save_disk_cache():
+    """Write the cache atomically. Called after each new word is learned —
+    cheap because the cache stays small (hundreds of entries, not millions)."""
+    global _disk_cache_dirty
+    if not _disk_cache_dirty:
+        return
+    try:
+        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CACHE_PATH.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_disk_cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+        tmp.replace(CACHE_PATH)
+        _disk_cache_dirty = False
+    except Exception as e:
+        log.warning("transliteration cache save failed: %s", e)
 
 
 def _patch_torch_load_for_fairseq():
@@ -94,14 +145,32 @@ def _load_engine():
 
 @lru_cache(maxsize=2048)
 def _transliterate_word(word: str) -> str:
-    """Per-word lookup with caching. Loanwords like 'robot' / 'light' /
-    'project' / 'AC' show up over and over in real conversation, so the
-    cache earns its keep fast."""
+    """Per-word lookup with two layers of caching:
+
+    1. lru_cache (this decorator) — in-process, super fast.
+    2. JSON file on disk — survives restarts, so the second time you ever
+       run this project you don't pay the XlitEngine cost for words you've
+       already used.
+
+    Loanwords like 'robot' / 'AC' / 'project' recur constantly in real
+    Nepanglish, so even a few hundred cached entries hit ~100% of repeat
+    traffic.
+    """
+    global _disk_cache_dirty
+    key = word.lower()
+
+    # --- layer 2: disk cache --------------------------------------------
+    _load_disk_cache()
+    cached = _disk_cache.get(key)
+    if cached is not None:
+        return cached
+
+    # --- layer 3: actually run the model --------------------------------
     engine = _load_engine()
     if engine is None:
         return word
     try:
-        result = engine.translit_word(word.lower(), topk=1)
+        result = engine.translit_word(key, topk=1)
     except Exception as e:
         # Don't kill synthesis just because one word's transliteration
         # blew up — the raw word will sound ugly but the sentence still
@@ -110,13 +179,21 @@ def _transliterate_word(word: str) -> str:
         return word
 
     # XlitEngine returns {lang_code: [candidates]}. Pick the top one.
+    translit = word
     if isinstance(result, dict):
         candidates = result.get("ne") or next(iter(result.values()), [])
         if candidates:
-            return candidates[0]
+            translit = candidates[0]
     elif isinstance(result, str):
-        return result
-    return word
+        translit = result
+
+    # Save the answer for next time.
+    with _cache_lock:
+        _disk_cache[key] = translit
+        _disk_cache_dirty = True
+    _save_disk_cache()
+
+    return translit
 
 
 def nepanglish_to_devanagari(text: str) -> str:

@@ -50,7 +50,18 @@ source .venv/bin/activate
 python scripts/test_repl.py
 ```
 
-Type a sentence, hit Enter, hear it. Type `quit` to exit.
+Type a sentence, hit Enter, hear it. Type `quit` (or `q`) to exit. The
+REPL also supports a few slash-commands while testing:
+
+| Command          | What it does                                      |
+|------------------|---------------------------------------------------|
+| `/list`          | List the rendered fillers                         |
+| `/<filler-name>` | Play a filler instantly (e.g. `/ah`, `/oh`)       |
+| `/render`        | Re-render fillers after editing them              |
+| `/help`          | Show the command list                             |
+
+Press `Ctrl-C` once to interrupt synthesis, or twice quickly to force-quit
+(useful when the C++ engine is mid-step and the first signal gets eaten).
 
 ### From your own Python code — one function
 
@@ -62,6 +73,39 @@ speak("Robot को speed बढाउ")        # mixed English + Nepali — wor
 ```
 
 That's the whole API. `speak(text)` is the function you asked for.
+
+#### Optional: prefix with a filler
+
+A "filler" is a short pre-rendered thinking sound the robot can say
+instantly — useful for making the robot feel responsive while a slower
+operation (LLM call, etc.) finishes in the background.
+
+```python
+from nepali_tts import speak, play_filler, render_fillers
+
+# Once, after install — generates the filler wavs:
+render_fillers()
+
+# Then either play one on its own:
+play_filler("ah")          # "अहँ..."  — uhh / hesitation
+play_filler("oh")          # "ओहो..."  — oh / realizing
+play_filler("la")          # "ल त..."  — well so...
+
+# ...or attach one to a speak() call (filler plays first, then the text):
+speak("तपाईंको प्रश्नको जवाफ यो हो।", filler="ah")
+```
+
+The intended pattern for hiding LLM latency in a robot pipeline:
+
+```python
+play_filler("ah")              # blocks ~0.5s — hides the next gap
+response = llm.generate(...)   # 1-3 seconds, runs in parallel-ish
+speak(response)                # streaming kicks in here
+```
+
+Available default fillers: `ah`, `oh`, `eh`, `la`. Edit
+`nepali_tts/fillers.py` (or pass your own dict to `render_fillers`) to
+add or change them.
 
 If you ever need just the raw audio (without playing it — e.g. to send it
 somewhere else), there are two ways:
@@ -142,11 +186,12 @@ three `player` lines after.
 
 ```
 nepali_tts/                  ← the actual library
-├── __init__.py              ← exposes the speak() function
-├── synthesizer.py           ← step 2: text → sound
-├── transliterator.py        ← step 1: English → Devanagari
+├── __init__.py              ← exposes speak(), play_filler(), render_fillers()
+├── synthesizer.py           ← step 2: text → sound (with comma-splitting)
+├── transliterator.py        ← step 1: English → Devanagari (+ disk cache)
 ├── resampler.py             ← step 3: 22050 Hz → 24000 Hz
 ├── player.py                ← step 4: send sound to speakers
+├── fillers.py               ← pre-rendered "thinking" sounds
 └── config.py                ← all the tunable settings in one place
 
 scripts/
@@ -154,6 +199,9 @@ scripts/
 └── test_repl.py             ← the interactive "type & hear" tester
 
 models/                      ← downloaded voice files (auto-created)
+├── vits-piper-ne_NP-…/      ← the voice model itself
+├── translit_cache.json      ← cached English→Devanagari lookups
+└── fillers/                 ← rendered filler wavs (auto-created)
 ```
 
 ## The tools doing the heavy lifting
@@ -173,35 +221,53 @@ everything.
 
 All the dials are in `nepali_tts/config.py`. The interesting ones:
 
-| Dial           | What it does                            | Try values  |
-|----------------|------------------------------------------|-------------|
-| `LENGTH_SCALE` | Speed — higher = slower speech           | 0.9 – 1.2   |
-| `NOISE_SCALE`  | How much expression / variation          | 0.30 – 0.50 |
-| `NOISE_W`      | Pitch wobble (more = livelier)           | 0.35 – 0.45 |
-| `SILENCE_SCALE`| Pause length between sentences           | 0.2 – 0.4   |
-| `NUM_THREADS`  | CPU cores to use (4 on laptop, 2 on Pi)  | 2 – 4       |
+| Dial              | What it does                                     | Try values  |
+|-------------------|--------------------------------------------------|-------------|
+| `MODEL_NAME`      | Which voice model variant to load (fp32/int8/fp16) | see file  |
+| `LENGTH_SCALE`    | Speed — higher = slower speech                   | 0.9 – 1.2   |
+| `NOISE_SCALE`     | How much expression / variation                  | 0.30 – 0.50 |
+| `NOISE_W`         | Pitch wobble (more = livelier)                   | 0.35 – 0.45 |
+| `SILENCE_SCALE`   | Pause length between sentences                   | 0.2 – 0.4   |
+| `NUM_THREADS`     | CPU cores to use (4 on laptop, 2 on Pi)          | 2 – 4       |
+| `MAX_CHUNK_CHARS` | Force splitting long sentences on `,`/`;`/`:` so streaming starts sooner. 0 disables. | 80 – 150 |
 
 Change them, save the file, run the REPL again to compare.
 
 ## Setup (only needed once)
 
 ```bash
-# Pin the Python version this project needs
+# 1. Pin the Python version this project needs
 mise install python@3.10
 
-# Make a virtual env and install the libraries
+# 2. Make a virtual env
 python -m venv .venv
 source .venv/bin/activate
-pip install "pip<24.1"          # older pip, more permissive about old packages
+pip install "pip<24.1"               # older pip — more permissive about
+                                     # fairseq's slightly-broken metadata
+
+# 3. Install CPU-only PyTorch first (saves ~2 GB of unused CUDA libs)
+pip install -r requirements-cpu.txt
+
+# 4. Then the project itself
 pip install -r requirements.txt
 
-# Download the Nepali voice model (~60 MB)
+# 5. Download the Nepali voice model (~60 MB)
 python scripts/download_model.py
 ```
 
-Why the older pip? One of our libraries (`fairseq`, used for English →
-Devanagari) has slightly broken metadata that newer pip refuses to install.
-Older pip is more forgiving.
+**Order matters in steps 3–4.** If you skip `requirements-cpu.txt` and
+just `pip install -r requirements.txt`, pip will pull the default CUDA
+build of PyTorch alongside fairseq — that's ~2 GB of NVIDIA libraries
+your CPU-only box will never use.
+
+If you already installed without the CPU index and want to slim down:
+
+```bash
+pip uninstall -y torch torchaudio nvidia-* triton
+pip install -r requirements-cpu.txt
+```
+
+(Alternatively keep what you have — it'll work fine, it's just bigger.)
 
 ## Honest caveats
 
@@ -217,8 +283,10 @@ Older pip is more forgiving.
   GB. On the Pi, switch to the CPU-only PyTorch build (and the int8
   Piper variant) to slim it down.
 - **Sentence boundaries matter.** The streaming engine splits on `।`
-  (Devanagari danda), `.`, `?`, `!`. If your text has none of those, the
-  whole thing is one big chunk and you lose the streaming benefit.
+  (Devanagari danda), `.`, `?`, `!`. If a single sentence is longer than
+  `MAX_CHUNK_CHARS`, we *also* split on `,` / `;` / `:` to keep streaming
+  responsive — so most well-punctuated text streams smoothly. Text with
+  no punctuation at all becomes one big chunk.
 
 [rel]: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
 
