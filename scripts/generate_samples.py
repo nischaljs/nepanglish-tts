@@ -1,17 +1,21 @@
 """Generate the audio demos that get embedded in the README.
 
-Produces a small set of representative wavs in `samples/` so anyone
-landing on the GitHub repo can hear what this thing sounds like *before*
-deciding to install it. That's the single biggest factor in TTS-repo
-adoption.
+Produces a small set of representative wavs in `samples/` plus a
+companion .mp4 of each. The .wav is the source of truth; the .mp4 (an
+AAC audio track in an mp4 container) is what we embed in the README,
+because GitHub's markdown renderer plays `<video>`-tagged mp4 files
+inline but doesn't render `<audio>` tags or auto-preview wavs.
 
 Run once:
     python scripts/generate_samples.py
 
-Re-run any time you change voice settings or the seed dict and want to
-refresh the demos.
+Re-run after editing prosody / loanword spellings to refresh the demos.
+
+Requires `ffmpeg` on PATH (Arch: `sudo pacman -S ffmpeg`).
 """
 
+import shutil
+import subprocess
 import sys
 import wave
 from pathlib import Path
@@ -75,6 +79,28 @@ def _save_wav(path: Path, audio: np.ndarray, rate: int) -> None:
         w.writeframes(pcm.tobytes())
 
 
+def _wav_to_mp4(wav_path: Path, mp4_path: Path) -> None:
+    """Encode a wav to an audio-only mp4 (AAC). Smaller than the wav and
+    — critically — plays inline in GitHub READMEs via the `<video>` tag.
+    """
+    if not shutil.which("ffmpeg"):
+        print("  !! ffmpeg not found — skipping mp4 conversion", file=sys.stderr)
+        return
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",                    # overwrite without asking
+            "-loglevel", "error",
+            "-i", str(wav_path),
+            "-c:a", "aac",
+            "-b:a", "96k",           # plenty for speech
+            "-movflags", "+faststart",  # let players start before full download
+            str(mp4_path),
+        ],
+        check=True,
+    )
+
+
 def main() -> int:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Generating samples into {SAMPLES_DIR}")
@@ -82,10 +108,12 @@ def main() -> int:
     synth = get_synthesizer()
 
     for filename, text, description in SAMPLES:
-        out_path = SAMPLES_DIR / filename
+        wav_path = SAMPLES_DIR / filename
+        mp4_path = wav_path.with_suffix(".mp4")
         print(f"  {filename:30}  {description}")
         audio = synth.synthesize(text)
-        _save_wav(out_path, audio, synth.output_sample_rate)
+        _save_wav(wav_path, audio, synth.output_sample_rate)
+        _wav_to_mp4(wav_path, mp4_path)
 
     print(f"\nDone. {len(SAMPLES)} sample(s) in {SAMPLES_DIR}/")
     return 0
