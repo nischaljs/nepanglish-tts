@@ -1,8 +1,45 @@
-# Nepali TTS
+# Nepanglish TTS
 
-A small project that turns Nepali (and Nepanglish) text into spoken audio.
-You give it a sentence, you hear it. Built to eventually run on a Raspberry
-Pi as the "voice" of a robot, but for now we test it on a laptop.
+[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**Offline, low-latency Nepali text-to-speech that handles code-switching
+("Nepanglish") gracefully — runs on CPU, ships to a Raspberry Pi.**
+
+You give it a sentence in Nepali, English, or any mix of the two, and it
+speaks it back in a natural Nepali voice. English words get phonetically
+transliterated to Devanagari first so they sound like a Nepali speaker
+saying them, not like a confused phonemizer.
+
+Designed to be the speech stage of a robotic voice assistant running on a
+Raspberry Pi 4 (no GPU, 4 GB RAM), but the same code runs anywhere Python
+runs. Audio is streamed sentence-by-sentence so the time-to-first-word is
+short even on slow hardware.
+
+```python
+from nepali_tts import speak
+
+speak("नमस्ते, मेरो नाम नोवा हो।")
+speak("यो robot को speed बढाउ।")        # mixed scripts — handled
+speak("Hello, how are you?")           # pure English — also fine
+```
+
+## Why this exists
+
+Most usable Nepali TTS today is cloud-based (Google, Azure, etc.) — fine
+for desktop apps but a non-starter when:
+
+- you're on an edge device with no internet (robot at an exhibition, kiosk,
+  rural deployment),
+- you can't afford per-request API fees,
+- privacy / data-locality matters,
+- or your input is **Nepanglish** — Nepali grammar with English nouns
+  sprinkled in, the way most Nepalis actually speak — which most cloud
+  TTS engines mangle.
+
+This project stitches together open-source pieces (Piper voice model,
+Sherpa-ONNX runtime, AI4Bharat transliteration, soxr) into a small
+streamable library that does the right thing on a CPU.
 
 ## How to use it
 
@@ -168,12 +205,43 @@ Older pip is more forgiving.
 
 ## Honest caveats
 
-- **Speed.** On the laptop, generating 1 second of audio takes ~1.3 seconds
-  of compute. On the Pi 4 it'll likely be slower. If it becomes a problem,
-  we have a smaller "int8" version of the model we can swap in.
+- **Speed.** On a laptop, generating 1 second of audio takes ~1.3 seconds
+  of compute (real-time factor ~1.3). On the Pi 4 it'll likely be slower.
+  If it becomes a problem, smaller `-int8` and `-fp16` quantized variants
+  of the same Piper model exist on the [sherpa-onnx releases page][rel].
 - **First English word is slow.** The English→Devanagari helper loads a
-  little AI model the first time it sees an English word. Adds ~3 seconds
-  to that very first sentence. After that, instant.
-- **Big install.** The transliteration helper drags in PyTorch + a bunch of
-  GPU libraries we don't actually use. Total install is ~3.8 GB. On the Pi
-  we'll switch to the CPU-only PyTorch build to slim it down.
+  small neural model the first time it sees an English token. Adds ~3
+  seconds to that very first sentence. After that, instant — and cached.
+- **Big install.** `ai4bharat-transliteration` drags in PyTorch + a bunch
+  of CUDA libraries we don't actually use on CPU. Total install is ~3.8
+  GB. On the Pi, switch to the CPU-only PyTorch build (and the int8
+  Piper variant) to slim it down.
+- **Sentence boundaries matter.** The streaming engine splits on `।`
+  (Devanagari danda), `.`, `?`, `!`. If your text has none of those, the
+  whole thing is one big chunk and you lose the streaming benefit.
+
+[rel]: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+
+## Acknowledgements
+
+This project stands entirely on top of these open-source tools:
+
+- [**Piper**](https://github.com/rhasspy/piper) — the underlying VITS
+  voice model, including the Nepali `chitwan-medium` and `google-medium`
+  voices.
+- [**Sherpa-ONNX**](https://github.com/k2-fsa/sherpa-onnx) — the C++
+  runtime that runs the Piper model fast on CPUs (including ARM).
+- [**AI4Bharat IndicXlit**](https://github.com/AI4Bharat/IndicXlit) — the
+  English → Indic transliteration model that makes the Nepanglish path
+  sound natural.
+- [**soxr**](https://github.com/dofuuz/python-soxr) — phase-preserving
+  streaming resampling.
+- [**sounddevice**](https://python-sounddevice.readthedocs.io/) — the
+  PortAudio Python bindings used for local playback.
+
+If you build something cool with this, ping me — I'd love to see it.
+
+## License
+
+[MIT](LICENSE) — do whatever you want, just don't blame me when your
+robot becomes self-aware.
