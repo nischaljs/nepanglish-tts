@@ -22,13 +22,15 @@ sample rate (24 kHz by default — see nepali_tts/config.py).
 """
 
 import argparse
+import errno
 import json
 import logging
+import socket
 import sys
 import threading
 import time
 import wave
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
@@ -161,7 +163,23 @@ def main() -> int:
         _synth.output_sample_rate,
     )
 
-    server = HTTPServer((args.host, args.port), _Handler)
+    # ThreadingHTTPServer handles each request in its own thread, so
+    # /health and /speak don't block each other. The synthesizer itself
+    # is still serialized via _synth_lock since sherpa-onnx isn't
+    # thread-safe — but at least a hung synth doesn't make the daemon
+    # appear dead to health checks.
+    try:
+        server = ThreadingHTTPServer((args.host, args.port), _Handler)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            log.error(
+                "Port %d is already in use. Another daemon is probably "
+                "running. Stop it with: pkill -9 -f tts_daemon.py",
+                args.port,
+            )
+            return 1
+        raise
+
     log.info("TTS daemon listening on http://%s:%d", args.host, args.port)
     log.info('POST /speak {"text": "...", "out_path": "/abs/path/out.wav"}')
     try:
