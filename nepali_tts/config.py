@@ -40,21 +40,21 @@ NATIVE_SAMPLE_RATE = 22050
 TARGET_SAMPLE_RATE = 24000
 
 # --- Prosody knobs (VITS stochastic duration predictor) -------------------
-# Higher = slower speech. Exhibition halls are noisy and listeners need
-# the extra parsing time. 1.0 = native pace; 1.15 = ~15% slower.
+# Higher = slower speech. 1.0 = native pace; 1.15 = ~15% slower —
+# enough head-room for clarity in noisy halls without dragging.
 LENGTH_SCALE = 1.15
 
-# Generator noise. 0.35 keeps the voice stable but not flat. The Piper
-# default of 0.667 is too breathy for a robot persona.
-NOISE_SCALE = 0.35
+# Generator noise. Controls timbre variation between syllables. 0.50 keeps
+# the voice human-sounding (not the flat 0.35 robot setting) without
+# costing any wall-clock — noise scale only affects timbre, not duration.
+NOISE_SCALE = 0.50
 
-# Phoneme-level pitch wobble. Critical for Nepali's tonal cadence — much
-# below 0.35 sounds monotone, much above 0.45 stutters.
-NOISE_W = 0.40
+# Phoneme-level pitch wobble. 0.45 is the upper limit before the model
+# stutters on consonant clusters; gives the cadence prosodic life
+# compared to a flat 0.40. No speed cost.
+NOISE_W = 0.45
 
-# Pause length at sentence boundaries. Mimics breathing and gives listeners
-# room to catch up between thoughts. The sherpa-onnx default is 0.2; the
-# brief suggests 0.2-0.3 for natural conversational delivery.
+# Pause length at sentence boundaries. 0.25 = short, conversational beat.
 SILENCE_SCALE = 0.25
 
 # How many CPU threads sherpa-onnx may use. The Pi 4's Cortex-A72 has 4

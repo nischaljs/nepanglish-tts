@@ -53,9 +53,14 @@ $PIP --upgrade pip >/dev/null 2>&1 || true
 # install the Nova-side deps explicitly. Note: Whisper transcription
 # goes through Groq's hosted model, so no local openai-whisper.
 $PIP groq python-dotenv pygame soundfile pydub edge-tts \
-     opencv-python webrtcvad-wheels PyAudio
+     webrtcvad-wheels PyAudio
 # Face recognition (InsightFace + onnxruntime as the runtime dep).
 $PIP insightface onnxruntime
+# OpenCV: scrub any headless variant a transitive dep may have pulled in
+# and force the GUI build. The headless one breaks cv2.imshow, which
+# scripts/talk_ui.py uses for the camera preview window.
+"$VENV/bin/pip" uninstall -y opencv-python opencv-python-headless >/dev/null 2>&1 || true
+$PIP opencv-python
 
 # ── 4. Make `nepali_tts` importable from anywhere in this venv ──
 echo ""

@@ -27,10 +27,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pygame
+import sounddevice as sd
 
 from config.config import AUDIO_PATH
+from nepali_tts import config as _ntc
 from nepali_tts import get_synthesizer
-from nepali_tts.player import play_stream
+
+# Keep MAX_CHUNK_CHARS at the library default (100). Lowering it to 40
+# helped streaming start sooner on long replies but caused comma-heavy
+# replies (numbers, lists) to be split into many tiny chunks, each
+# carrying a sentence-final silence pad — which made "एक, दुई, तीन..."
+# take 7 s instead of 3 s. The streaming win wasn't worth that cost.
 
 executor = ThreadPoolExecutor(max_workers=2)
 music_paused = False
@@ -48,6 +55,39 @@ def _ensure_mixer():
 print("[TTS] Loading Nepali TTS model (one-time)...")
 _synth = get_synthesizer()
 print(f"[TTS] Model ready (output rate: {_synth.output_sample_rate} Hz).")
+
+# Sherpa-onnx's first call is ~200-400 ms slower than steady-state — the
+# graph hasn't warmed up its arena allocator and the espeak dictionaries
+# aren't memory-resident yet. Synthesize a single throw-away token now
+# so the first user-facing reply doesn't pay that tax.
+def _warm_synth():
+    t0 = time.time()
+    try:
+        for _ in _synth.synthesize_stream("नमस्ते"):
+            pass
+        print(f"[TTS] Warm-up done in {(time.time()-t0)*1000:.0f}ms")
+    except Exception as e:
+        print(f"[TTS] warm-up failed (non-fatal): {e}")
+
+
+threading.Thread(target=_warm_synth, name="tts-warm", daemon=True).start()
+
+
+def _play_stream_low_latency(chunks, sample_rate):
+    """Streaming playback with the lowest sounddevice latency the host
+    backend will give us. Same shape as nepali_tts.player.play_stream
+    but passes `latency='low'` to OutputStream — typically shaves 50-100
+    ms off the first-audio-out delay vs PortAudio's default buffer.
+    """
+    with sd.OutputStream(
+        samplerate=sample_rate,
+        channels=1,
+        dtype="float32",
+        latency="low",
+    ) as stream:
+        for chunk in chunks:
+            if chunk.size:
+                stream.write(chunk)
 
 # Tracks paths the synth-stream just played, so the immediately-following
 # play_audio(path) call can no-op (audio is already out the speakers).
@@ -109,7 +149,7 @@ def _synth_stream_and_write(text: str, out_path: str) -> None:
             chunks.append(c)
             yield c
 
-    play_stream(_tee(), sample_rate=_synth.output_sample_rate)
+    _play_stream_low_latency(_tee(), sample_rate=_synth.output_sample_rate)
 
     audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
     _write_wav(out_path, audio, _synth.output_sample_rate)
