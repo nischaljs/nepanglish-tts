@@ -80,6 +80,75 @@ case "${1:-}" in
         echo "Starting Nepali TTS HTTP daemon (Ctrl-C to stop)."
         echo ""
         exec .venv/bin/python scripts/tts_daemon.py "$@" ;;
+    nova)
+        # End-to-end: install integration into Nova, start daemon if
+        # needed, wait for it, run Nova, kill daemon on exit (if we
+        # started it). One paste, one command.
+        [[ -f "$MARKER" ]] || setup
+
+        NOVA_DIR="${NOVA_DIR:-$HOME/Documents/welcome-bot/Nova-HomeAutomation}"
+        if [[ ! -d "$NOVA_DIR" ]]; then
+            echo "ERROR: Nova not found at $NOVA_DIR" >&2
+            echo "Set NOVA_DIR env var: NOVA_DIR=/path bash run.sh nova" >&2
+            exit 1
+        fi
+
+        echo ""
+        echo "=== Installing nepali_tts integration into Nova ==="
+        bash scripts/install_into_nova.sh "$NOVA_DIR"
+
+        STARTED_DAEMON=false
+        DAEMON_PID=""
+
+        # Did someone already start the daemon? (curl returns 0 on /health)
+        if curl -sf http://127.0.0.1:5555/health >/dev/null 2>&1; then
+            echo ""
+            echo "TTS daemon already running — reusing it."
+        else
+            echo ""
+            echo "=== Starting TTS daemon in background ==="
+            nohup .venv/bin/python scripts/tts_daemon.py \
+                > /tmp/tts-daemon.log 2>&1 &
+            DAEMON_PID=$!
+            STARTED_DAEMON=true
+            disown "$DAEMON_PID" 2>/dev/null || true
+
+            echo "Waiting for daemon to load model..."
+            for i in $(seq 1 30); do
+                if curl -sf http://127.0.0.1:5555/health >/dev/null 2>&1; then
+                    echo "Daemon ready (PID $DAEMON_PID, took ${i}s)."
+                    break
+                fi
+                sleep 1
+            done
+
+            if ! curl -sf http://127.0.0.1:5555/health >/dev/null 2>&1; then
+                echo "ERROR: daemon didn't come up in 30s." >&2
+                echo "Last 30 lines of /tmp/tts-daemon.log:" >&2
+                tail -30 /tmp/tts-daemon.log >&2 || true
+                exit 1
+            fi
+        fi
+
+        # Stop the daemon on exit ONLY if we started it. If a long-lived
+        # daemon was already running (e.g. from `bash run.sh daemon`),
+        # leave it alone.
+        cleanup() {
+            if [[ "$STARTED_DAEMON" == "true" && -n "$DAEMON_PID" ]]; then
+                echo ""
+                echo "Stopping TTS daemon (PID $DAEMON_PID)..."
+                kill "$DAEMON_PID" 2>/dev/null || true
+            fi
+        }
+        trap cleanup EXIT INT TERM
+
+        echo ""
+        echo "=== Running Nova ==="
+        echo "Daemon logs:  tail -f /tmp/tts-daemon.log"
+        echo ""
+        cd "$NOVA_DIR"
+        ./run_live_test_with_esp32_mimic.sh
+        ;;
     --)
         [[ -f "$MARKER" ]] || setup
         shift
@@ -91,6 +160,6 @@ case "${1:-}" in
         echo ""
         exec .venv/bin/python scripts/test_repl.py ;;
     *)
-        echo "Usage: bash run.sh [setup | daemon [--port N] | -- <cmd...>]" >&2
+        echo "Usage: bash run.sh [setup | daemon [--port N] | nova | -- <cmd...>]" >&2
         exit 2 ;;
 esac
