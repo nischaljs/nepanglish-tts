@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Linux / macOS / Raspberry Pi setup script for nepanglish-tts.
+# Linux / macOS / Raspberry Pi setup for nepanglish-tts.
 #
 # Run from the repo root:
 #     bash scripts/setup.sh
 #
-# Order matters: CPU-only torch must be installed BEFORE
-# ai4bharat-transliteration, or pip pulls 2 GB of unused CUDA libs.
+# This bootstraps everything end-to-end: installs `uv` (a single-binary
+# Python toolchain), uses it to download a standalone Python 3.10 just
+# for this project, creates the venv, and installs all deps in the right
+# order (CPU torch first to avoid 2 GB of unused CUDA libs).
+#
+# Why 3.10 specifically: fairseq (transitive dep of
+# ai4bharat-transliteration) fails to import on Python 3.11+ due to a
+# stricter @dataclass mutable-default check. See mise.toml.
 
 set -euo pipefail
 
@@ -14,65 +20,52 @@ echo "=== nepanglish-tts setup ==="
 echo "Repo path: $(pwd)"
 echo ""
 
-# 1. Find Python 3.10. README pins 3.10; newer Pythons can break some
-#    transitive deps from fairseq.
-PYTHON=""
-for candidate in python3.10 python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        ver=$("$candidate" --version 2>&1 || true)
-        if [[ "$ver" == *"Python 3.10."* ]]; then
-            PYTHON="$candidate"
-            echo "Using: $candidate ($ver)"
-            break
-        fi
+# 1. Install uv if missing. Drops a single binary into ~/.local/bin (or
+#    ~/.cargo/bin on some setups). No admin rights, no system Python
+#    changes.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Installing uv (one-time, ~30 MB)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # The installer prints a hint about sourcing its env; do it inline so
+    # uv is on PATH for the rest of this script.
+    if [[ -f "$HOME/.local/bin/env" ]]; then
+        # shellcheck source=/dev/null
+        source "$HOME/.local/bin/env"
     fi
-done
-if [[ -z "$PYTHON" ]]; then
-    echo "ERROR: Python 3.10 not found." >&2
-    echo "On Debian/Ubuntu/Raspberry Pi OS:" >&2
-    echo "    sudo apt install python3.10 python3.10-venv" >&2
-    echo "On macOS:    brew install python@3.10" >&2
-    echo "Or use mise: mise install python@3.10" >&2
-    exit 1
+    export PATH="$HOME/.local/bin:$PATH"
 fi
+echo "uv: $(uv --version)"
 
-# 2. Create venv if missing.
+# 2. Fetch a standalone Python 3.10 just for this project. uv caches it
+#    under ~/.local/share/uv/python/ — no apt, brew, or admin needed.
+echo ""
+echo "Provisioning Python 3.10..."
+uv python install 3.10
+
+# 3. Create the venv pointing at that 3.10.
 if [[ ! -d ".venv" ]]; then
     echo "Creating .venv..."
-    "$PYTHON" -m venv .venv
+    uv venv --python 3.10 .venv
 else
     echo ".venv already exists, reusing it."
 fi
 
-PIP=".venv/bin/pip"
-VENV_PY=".venv/bin/python"
-
-if [[ ! -x "$PIP" ]]; then
-    echo "ERROR: venv creation failed (no .venv/bin/pip)." >&2
-    exit 1
-fi
-
-# 3. Pin pip to a version that's permissive about fairseq's metadata
-#    and bump the network timeout for big sdist downloads.
-echo ""
-echo "Pinning pip < 24.1 and raising network timeout to 300s..."
-"$VENV_PY" -m pip install --upgrade "pip<24.1"
-"$PIP" config set global.timeout 300
-
-# 4. CPU-only torch FIRST — saves ~2 GB of unused CUDA libs.
+# 4. CPU-only torch FIRST — saves ~2 GB of unused CUDA libs. uv's
+#    resolver is more forgiving of fairseq's broken metadata than modern
+#    pip, so we don't need the pip<24.1 dance.
 echo ""
 echo "Installing CPU-only torch (slow step, be patient)..."
-"$PIP" install --default-timeout=300 --retries 5 -r requirements-cpu.txt
+VIRTUAL_ENV=".venv" uv pip install -r requirements-cpu.txt
 
 # 5. Project deps.
 echo ""
 echo "Installing project requirements..."
-"$PIP" install --default-timeout=300 --retries 5 -r requirements.txt
+VIRTUAL_ENV=".venv" uv pip install -r requirements.txt
 
 # 6. Voice model.
 echo ""
 echo "Downloading the Nepali voice model (~60 MB)..."
-"$VENV_PY" scripts/download_model.py
+.venv/bin/python scripts/download_model.py
 
 echo ""
 echo "Done. Activate with:"
