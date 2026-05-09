@@ -24,14 +24,22 @@ sample rate (24 kHz by default — see nepali_tts/config.py).
 import argparse
 import json
 import logging
+import sys
 import threading
 import time
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import numpy as np
 
-from nepali_tts import get_synthesizer
+# Run-from-anywhere import: scripts/ isn't a package, so add the repo
+# root to sys.path before importing nepali_tts. Same trick the other
+# scripts in this folder use.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from nepali_tts import get_synthesizer  # noqa: E402
 
 log = logging.getLogger("tts-daemon")
 
