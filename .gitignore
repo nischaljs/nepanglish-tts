@@ -16,8 +16,17 @@ models/
 .vscode/
 .idea/
 .DS_Store
-# Nova checkout — cloned by bootstrap_pi.sh, not part of this repo.
-nova/
+
+# nova/ used to be ignored (it's normally cloned by bootstrap_pi.sh from
+# yubraj525/Nova-HomeAutomation). On the `complete-humanoid` branch we
+# track it directly so this branch is a self-contained snapshot of the
+# working pipeline. Nova's own .gitignore still excludes nova/.env (the
+# Groq API key) and nova/.venv, so secrets stay out.
+
+# Don't push the local browser cookies (yt-dlp tracking IDs) or the
+# pre-patch tts_engine backup the bootstrap leaves behind.
+nova/cookies.txt
+nova/**/*.bak
 
 # Face recognition: the Python package IS committed (we own the code),
 # but downloaded models and registered face data stay local.

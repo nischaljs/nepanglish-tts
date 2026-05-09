@@ -1,0 +1,37 @@
+# edge_tts==7.2.7
+# fastapi==0.135.1
+# groq==1.1.1
+# kokoro_onnx==0.5.0
+# numpy==2.4.3
+# ollama==0.6.1
+# protobuf==7.34.1
+# PyAudio==0.2.14
+# pydub==0.25.1
+# pygame==2.6.1
+# python-dotenv==1.2.2
+# soundfile==0.13.1
+# uvicorn==0.42.0
+# webrtcvad_wheels==2.0.13
+# websockets==16.0
+# google-genai
+# yt_dlp
+# opencv-python
+
+# Core: the TTS runtime and the Piper VITS model loader.
+sherpa-onnx>=1.10.0
+
+# Phase-preserving streaming resampler (22050 → 24000). Has NEON-optimized
+# wheels for ARM, so the same package works on the laptop and the Pi.
+soxr>=0.3.7
+
+# Local audio playback for the test REPL. Not needed in production where
+# audio leaves the box over WebSocket.
+sounddevice>=0.4.6
+
+numpy>=1.24.0
+
+# English → Devanagari transliteration. Drags in PyTorch + fairseq.
+# IMPORTANT: install this *after* a CPU-only torch (see requirements-cpu.txt
+# or the README) — otherwise pip pulls the default CUDA build, which is
+# ~2 GB of GPU libraries we never use on a CPU-only box like the Pi.
+ai4bharat-transliteration>=1.1.3
