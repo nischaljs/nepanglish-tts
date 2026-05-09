@@ -36,6 +36,13 @@ from config.config import AUDIO_PATH
 TTS_DAEMON_URL = os.environ.get("TTS_DAEMON_URL", "http://127.0.0.1:5555")
 TTS_TIMEOUT_S = 120  # streaming includes playback time, so be generous
 
+# Set TTS_STREAM=0 to disable daemon-side streaming playback and fall
+# back to "render whole WAV → pygame plays it" — useful if your audio
+# device can't be shared between this process (pygame) and the daemon
+# (sounddevice). Default is streaming on, because streaming makes the
+# first sentence audible ~5s sooner on long replies.
+TTS_STREAM_DEFAULT = os.environ.get("TTS_STREAM", "1") != "0"
+
 executor = ThreadPoolExecutor()
 music_paused = False
 music_playing = False
@@ -45,10 +52,21 @@ music_playing = False
 _streamed_lock = threading.Lock()
 _streamed_path: str | None = None
 
-pygame.mixer.init()
+
+def _ensure_mixer():
+    """Init pygame.mixer the first time it's actually needed.
+
+    Why lazy: if we init at import, pygame grabs the audio device and
+    the daemon's sounddevice can't open it for streaming playback.
+    Init-on-demand means we hold the device only when music or
+    fallback (non-streamed) playback actually runs.
+    """
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
 
 
 def _play_blocking(path):
+    _ensure_mixer()
     pygame.mixer.music.load(path)
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
@@ -78,7 +96,7 @@ def _post_to_daemon(text, out_path):
     payload = json.dumps({
         "text": text,
         "out_path": out_path,
-        "stream": True,  # play as we synthesize
+        "stream": TTS_STREAM_DEFAULT,  # daemon plays as it synthesizes
     }).encode()
     req = urllib.request.Request(
         f"{TTS_DAEMON_URL}/speak",
@@ -124,6 +142,7 @@ async def text_to_speech(text, emotion="friendly", out_path=None):
 
 def pause_music():
     global music_paused
+    # Don't _ensure_mixer here — if mixer isn't inited, nothing can be playing.
     if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
         pygame.mixer.music.pause()
         music_paused = True
