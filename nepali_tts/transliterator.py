@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import threading
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -144,6 +145,29 @@ def _load_engine():
     return _engine
 
 
+# Bare → nuqta-marked Devanagari. espeak-ng phonemizes the nuqta
+# variants closer to English /f/ and /z/ where supported, so English
+# words like "phone", "fast", "office", "zone" sound more like a Nepali
+# code-switching to English than a Nepali reading English literally.
+_LEAN_REPLACEMENTS = (
+    ("फ", "फ़"),   # फ → फ़   ("ph" → "f")
+    ("ज", "ज़"),   # ज → ज़   ("j"  → "z")
+)
+
+
+def _english_leaning(devanagari: str) -> str:
+    """Subtle post-process: nudge transliterated English toward English
+    phonemes via nuqta-marked Devanagari. Idempotent — NFC-normalize
+    first so we don't double-stack a nuqta on letters that already
+    carry one. No-op when ENGLISH_LEAN_TRANSLIT is False."""
+    if not getattr(config, "ENGLISH_LEAN_TRANSLIT", True):
+        return devanagari
+    text = unicodedata.normalize("NFC", devanagari)
+    for src, dst in _LEAN_REPLACEMENTS:
+        text = text.replace(src, dst)
+    return text
+
+
 @lru_cache(maxsize=2048)
 def _transliterate_word(word: str) -> str:
     """Per-word lookup with three layers, cheapest first:
@@ -164,13 +188,13 @@ def _transliterate_word(word: str) -> str:
     # --- layer 1: hand-curated seed ------------------------------------
     seeded = SEED_LOANWORDS.get(key)
     if seeded is not None:
-        return seeded
+        return _english_leaning(seeded)
 
     # --- layer 2: disk cache -------------------------------------------
     _load_disk_cache()
     cached = _disk_cache.get(key)
     if cached is not None:
-        return cached
+        return _english_leaning(cached)
 
     # --- layer 3: actually run the model -------------------------------
     engine = _load_engine()
@@ -194,13 +218,15 @@ def _transliterate_word(word: str) -> str:
     elif isinstance(result, str):
         translit = result
 
-    # Save the answer for next time.
+    # Save the raw model output (without lean) so toggling the config
+    # flag later doesn't require re-synthesizing — apply the lean only
+    # at retrieval time.
     with _cache_lock:
         _disk_cache[key] = translit
         _disk_cache_dirty = True
     _save_disk_cache()
 
-    return translit
+    return _english_leaning(translit)
 
 
 def nepanglish_to_devanagari(text: str) -> str:

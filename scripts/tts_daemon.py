@@ -43,6 +43,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from nepali_tts import get_synthesizer  # noqa: E402
 from nepali_tts.player import play_stream  # noqa: E402
+from nepali_tts.transliterator import warm_up as _warm_translit  # noqa: E402
 
 log = logging.getLogger("tts-daemon")
 
@@ -162,6 +163,19 @@ def main() -> int:
         _synth.native_sample_rate,
         _synth.output_sample_rate,
     )
+
+    # Pre-load the AI4Bharat transliteration model now so the first
+    # request that hits an English word doesn't pay the ~3s lazy load
+    # penalty mid-conversation.
+    log.info("Pre-warming English→Devanagari transliterator...")
+    try:
+        _warm_translit()
+        log.info("Transliterator ready.")
+    except Exception as e:
+        log.warning(
+            "Transliterator warm-up failed (%s) — will lazy-load on first "
+            "English token. Synthesis still works.", e,
+        )
 
     # ThreadingHTTPServer handles each request in its own thread, so
     # /health and /speak don't block each other. The synthesizer itself

@@ -5,23 +5,26 @@ might want to change between laptop testing and Pi deployment lives in this
 file.
 """
 
+import os
 from pathlib import Path
 
 # Layout: <project root>/models/<archive name>/...
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 
-# Pick a model variant. Three are available on the sherpa-onnx releases
-# page (k2-fsa/sherpa-onnx, "tts-models" tag):
-#   "vits-piper-ne_NP-chitwan-medium"        ← fp32, biggest, best on x86 laptops
-#   "vits-piper-ne_NP-chitwan-medium-int8"   ← quantized, half the size — try
-#                                              this on Pi 4 / ARM where the
-#                                              int8 path is well-optimized
-#   "vits-piper-ne_NP-chitwan-medium-fp16"   ← middle ground
-# In our testing fp32 was actually faster than int8 on x86_64 (ORT's
-# int8 dequant overhead can outweigh the wins on small VITS models),
-# but on aarch64 with proper int8 kernels int8 should win.
-MODEL_NAME = "vits-piper-ne_NP-chitwan-medium"
+# Pick a model variant. Available on the sherpa-onnx releases page
+# (k2-fsa/sherpa-onnx, "tts-models" tag):
+#   "vits-piper-ne_NP-chitwan-medium"      ← male voice, fp32 (laptop default)
+#   "vits-piper-ne_NP-chitwan-medium-int8" ← male, quantized — fastest on Pi
+#   "vits-piper-ne_NP-chitwan-medium-fp16" ← male, middle ground
+#   "vits-piper-ne_NP-google-medium"       ← female (Google's Nepali TTS)
+#
+# Override at runtime without editing this file:
+#   NEPALI_TTS_MODEL=vits-piper-ne_NP-chitwan-medium-int8 ./run.sh ...
+MODEL_NAME = os.environ.get(
+    "NEPALI_TTS_MODEL",
+    "vits-piper-ne_NP-google-medium",
+)
 MODEL_DIR = MODELS_DIR / MODEL_NAME
 
 # Sherpa-onnx archives put the .onnx alongside these two files. We
@@ -37,9 +40,9 @@ NATIVE_SAMPLE_RATE = 22050
 TARGET_SAMPLE_RATE = 24000
 
 # --- Prosody knobs (VITS stochastic duration predictor) -------------------
-# Slightly slower than default. Exhibition halls are noisy; listeners need
-# the extra parsing time. Drop to 1.0 for normal pace.
-LENGTH_SCALE = 1.05
+# Higher = slower speech. Exhibition halls are noisy and listeners need
+# the extra parsing time. 1.0 = native pace; 1.15 = ~15% slower.
+LENGTH_SCALE = 1.15
 
 # Generator noise. 0.35 keeps the voice stable but not flat. The Piper
 # default of 0.667 is too breathy for a robot persona.
@@ -64,3 +67,13 @@ NUM_THREADS = 4
 # splits at commas / colons so the listener hears the first chunk
 # sooner. Set to 0 to disable.
 MAX_CHUNK_CHARS = 100
+
+# When True, transliterated English tokens get a pass that swaps bare
+# फ → फ़ and ज → ज़ (nuqta-marked variants). espeak-ng phonemizes the
+# nuqta forms with /f/ and /z/ on languages that support them, where the
+# unmarked forms come out as /pʰ/ and /dʒ/. The voice is still Nepali,
+# but words like "phone", "fast", "office", "zone", "zero" sound a touch
+# more like a Nepali speaker code-switching to English than a Nepali
+# reading English letter-by-letter. Set False if it sounds wrong on
+# your model variant.
+ENGLISH_LEAN_TRANSLIT = True
