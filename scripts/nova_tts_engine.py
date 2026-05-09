@@ -1,8 +1,20 @@
-"""TTS engine — talks to the local nepali_tts HTTP daemon for synthesis,
-plays the resulting WAV via pygame. Music controls unchanged.
+"""TTS engine — streams synthesis through the local nepali_tts HTTP daemon.
 
-This file is the drop-in replacement for Nova's app/tts/tts_engine.py.
-The installer (scripts/install_into_nova.sh) copies it into Nova.
+This file is the drop-in replacement for Nova's app/tts/tts_engine.py;
+the installer (scripts/install_into_nova.sh) copies it into Nova.
+
+How it works:
+  - text_to_speech(text, out_path) POSTs to the daemon with stream=true.
+    The daemon synthesizes sentence-by-sentence and plays each sentence
+    through its own sounddevice output as it becomes ready (so the first
+    sentence is audible in ~1s instead of waiting for the whole reply).
+    A WAV file is also written at out_path for compatibility with code
+    that wants to replay or save it.
+
+  - When the request returns, we mark out_path as "already played". The
+    next play_audio(out_path) call sees the marker and becomes a no-op,
+    so audio doesn't play twice. play_audio() still does its normal
+    pygame thing for *other* paths (music, prerecorded greetings, etc.).
 
 The daemon must be running on localhost:5555 — start it with:
     cd ~/Documents/nepanglish-tts && bash run.sh daemon
@@ -11,6 +23,7 @@ The daemon must be running on localhost:5555 — start it with:
 import asyncio
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -21,11 +34,16 @@ import pygame
 from config.config import AUDIO_PATH
 
 TTS_DAEMON_URL = os.environ.get("TTS_DAEMON_URL", "http://127.0.0.1:5555")
-TTS_TIMEOUT_S = 60  # generous — Pi can take a while on long replies
+TTS_TIMEOUT_S = 120  # streaming includes playback time, so be generous
 
 executor = ThreadPoolExecutor()
 music_paused = False
 music_playing = False
+
+# Tracks the path of audio the daemon just streamed/played for us, so
+# the immediately-following play_audio(path) call can no-op.
+_streamed_lock = threading.Lock()
+_streamed_path: str | None = None
 
 pygame.mixer.init()
 
@@ -39,12 +57,29 @@ def _play_blocking(path):
 
 
 async def play_audio(path=AUDIO_PATH):
+    """Play `path` through pygame, UNLESS the daemon just streamed it
+    for us (in which case the audio already came out of the speakers
+    and a pygame replay would double it up)."""
+    abs_path = os.path.abspath(path)
+    global _streamed_path
+    with _streamed_lock:
+        if _streamed_path == abs_path:
+            _streamed_path = None
+            print(f"[TTS] (already streamed by daemon — skipping pygame replay)")
+            return
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(executor, _play_blocking, path)
 
 
 def _post_to_daemon(text, out_path):
-    payload = json.dumps({"text": text, "out_path": out_path}).encode()
+    # Resolve to absolute — Nova's CWD differs from the daemon's, so a
+    # relative path would land in the wrong place (or fail to write).
+    out_path = os.path.abspath(out_path)
+    payload = json.dumps({
+        "text": text,
+        "out_path": out_path,
+        "stream": True,  # play as we synthesize
+    }).encode()
     req = urllib.request.Request(
         f"{TTS_DAEMON_URL}/speak",
         data=payload,
@@ -54,6 +89,15 @@ def _post_to_daemon(text, out_path):
     try:
         with urllib.request.urlopen(req, timeout=TTS_TIMEOUT_S) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # Daemon WAS reachable but returned a non-2xx — surface its
+        # actual error message rather than a generic "unreachable".
+        try:
+            body = json.loads(e.read())
+            msg = body.get("message", str(e))
+        except Exception:
+            msg = str(e)
+        raise RuntimeError(f"TTS daemon error ({e.code}): {msg}") from e
     except urllib.error.URLError as e:
         raise RuntimeError(
             f"TTS daemon unreachable at {TTS_DAEMON_URL}. Start it with: "
@@ -63,12 +107,18 @@ def _post_to_daemon(text, out_path):
 
 async def text_to_speech(text, emotion="friendly", out_path=None):
     out_path = out_path or AUDIO_PATH
-    print(f"[TTS] Asking daemon to synthesize → {out_path}")
+    abs_out = os.path.abspath(out_path)
+    print(f"[TTS] Streaming via daemon → {abs_out}")
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(executor, _post_to_daemon, text, out_path)
     if result.get("status") != "ok":
         raise RuntimeError(f"TTS daemon error: {result}")
-    print(f"[TTS] Render done in {result.get('duration_ms')}ms")
+    # Mark the path so the upcoming play_audio() call skips the replay.
+    if result.get("played"):
+        global _streamed_path
+        with _streamed_lock:
+            _streamed_path = abs_out
+    print(f"[TTS] Done in {result.get('duration_ms')}ms (played via daemon stream)")
     return out_path
 
 

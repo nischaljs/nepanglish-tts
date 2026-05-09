@@ -40,6 +40,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from nepali_tts import get_synthesizer  # noqa: E402
+from nepali_tts.player import play_stream  # noqa: E402
 
 log = logging.getLogger("tts-daemon")
 
@@ -86,7 +87,12 @@ class _Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0"))
             data = json.loads(self.rfile.read(n))
             text = data["text"]
-            out_path = data["out_path"]
+            out_path = data.get("out_path")  # optional
+            # When True (default), the daemon plays audio through its own
+            # sounddevice output as it's being synthesized — first sentence
+            # is audible after ~1s instead of waiting for the whole reply
+            # to render. The caller should then *skip* re-playing the file.
+            stream = bool(data.get("stream", True))
         except Exception as e:
             self._reply(400, {"status": "error", "message": f"bad request: {e}"})
             return
@@ -94,16 +100,45 @@ class _Handler(BaseHTTPRequestHandler):
         t0 = time.time()
         try:
             with _synth_lock:
-                audio = _synth.synthesize(text)
-                _write_wav(out_path, audio, _synth.output_sample_rate)
+                if stream:
+                    # Pipeline synth → playback. Tee chunks into a list so
+                    # we can also write the WAV file at the end if asked.
+                    chunks: list[np.ndarray] = []
+
+                    def _tee():
+                        for c in _synth.synthesize_stream(text):
+                            chunks.append(c)
+                            yield c
+
+                    play_stream(_tee(), sample_rate=_synth.output_sample_rate)
+                    audio = (
+                        np.concatenate(chunks)
+                        if chunks
+                        else np.zeros(0, dtype=np.float32)
+                    )
+                else:
+                    audio = _synth.synthesize(text)
+
+                if out_path:
+                    p = Path(out_path)
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    _write_wav(str(p), audio, _synth.output_sample_rate)
         except Exception as e:
             log.exception("synthesis failed")
             self._reply(500, {"status": "error", "message": str(e)})
             return
 
         ms = int((time.time() - t0) * 1000)
-        log.info("synthesized %d chars → %s (%dms)", len(text), out_path, ms)
-        self._reply(200, {"status": "ok", "out_path": out_path, "duration_ms": ms})
+        log.info(
+            "synthesized %d chars (stream=%s) → %s (%dms)",
+            len(text), stream, out_path or "(no file)", ms,
+        )
+        self._reply(200, {
+            "status": "ok",
+            "out_path": out_path,
+            "duration_ms": ms,
+            "played": stream,
+        })
 
 
 def main() -> int:
