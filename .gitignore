@@ -16,3 +16,10 @@ models/
 .vscode/
 .idea/
 .DS_Store
+# Nova checkout — cloned by bootstrap_pi.sh, not part of this repo.
+nova/
+
+# Face recognition: the Python package IS committed (we own the code),
+# but downloaded models and registered face data stay local.
+face-recognition/models/
+face-recognition/face_data/
