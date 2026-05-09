@@ -73,6 +73,15 @@ switch ($cmd) {
         Run-Setup
         exit 0
     }
+    "daemon" {
+        if (-not (Test-Path $marker)) { Run-Setup }
+        $rest = if ($args.Length -gt 1) { $args[1..($args.Length - 1)] } else { @() }
+        Write-Host ""
+        Write-Host "Starting Nepali TTS HTTP daemon (Ctrl-C to stop)." -ForegroundColor Cyan
+        Write-Host ""
+        & $venvPython scripts\tts_daemon.py @rest
+        exit $LASTEXITCODE
+    }
     "--" {
         if (-not (Test-Path $marker)) { Run-Setup }
         $rest = if ($args.Length -gt 1) { $args[1..($args.Length - 1)] } else { @() }
@@ -88,7 +97,7 @@ switch ($cmd) {
         exit $LASTEXITCODE
     }
     default {
-        Write-Host "Usage: .\run.ps1 [setup | -- <cmd...>]" -ForegroundColor Yellow
+        Write-Host "Usage: .\run.ps1 [setup | daemon [--port N] | -- <cmd...>]" -ForegroundColor Yellow
         exit 2
     }
 }

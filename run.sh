@@ -73,6 +73,13 @@ case "${1:-}" in
     setup)
         setup
         exit 0 ;;
+    daemon)
+        [[ -f "$MARKER" ]] || setup
+        shift
+        echo ""
+        echo "Starting Nepali TTS HTTP daemon (Ctrl-C to stop)."
+        echo ""
+        exec .venv/bin/python scripts/tts_daemon.py "$@" ;;
     --)
         [[ -f "$MARKER" ]] || setup
         shift
@@ -84,6 +91,6 @@ case "${1:-}" in
         echo ""
         exec .venv/bin/python scripts/test_repl.py ;;
     *)
-        echo "Usage: bash run.sh [setup | -- <cmd...>]" >&2
+        echo "Usage: bash run.sh [setup | daemon [--port N] | -- <cmd...>]" >&2
         exit 2 ;;
 esac
