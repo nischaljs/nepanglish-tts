@@ -1,0 +1,27 @@
+[Unit]
+Description=Nepali TTS HTTP daemon (nepanglish-tts)
+Documentation=https://github.com/nischaljs/nepanglish-tts
+# Wait for the network and audio subsystem before starting — model
+# load itself doesn't need network, but the moment we get a request
+# the audio device must be ready.
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/nepanglish-tts
+ExecStart=%h/Documents/nepanglish-tts/.venv/bin/python scripts/tts_daemon.py
+# Restart on crash (but not if we manually stop it). Wait 5s between
+# attempts so we don't hammer a broken setup.
+Restart=on-failure
+RestartSec=5
+# Model load is ~5-10s on Pi 4; give the daemon time to bind /health
+# before systemd considers startup failed.
+TimeoutStartSec=60
+# Send stdout/stderr to the user journal — view with:
+#   journalctl --user -u tts-daemon -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
