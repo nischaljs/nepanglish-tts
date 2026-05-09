@@ -5,6 +5,10 @@ __pycache__/
 venv/
 .env
 
+# Project-local uv cache (downloaded standalone Python + package cache).
+# Created by run.sh / run.ps1; safe to delete to force a clean reinstall.
+.uv/
+
 # Downloaded model files — fetched by scripts/download_model.py
 models/
 

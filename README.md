@@ -319,6 +319,30 @@ Change them, save the file, run the REPL again to compare.
 
 ## Setup (only needed once)
 
+### Easy path — one command
+
+The `run` script does everything: installs `uv` (a single-binary Python
+toolchain), downloads a standalone Python 3.10 *into the project
+folder*, creates the venv, installs deps in the right order, and pulls
+the voice model. Re-runs are cheap; subsequent invocations just launch
+the REPL.
+
+```bash
+# Linux / macOS / Raspberry Pi
+bash run.sh
+
+# Windows — either double-click run.bat in Explorer, or:
+.\run.ps1
+```
+
+Nothing leaks system-wide: every byte (uv's cache, the standalone
+Python, the venv, the model) lives inside the project folder. Delete
+the folder to uninstall everything.
+
+You don't need Python pre-installed. You don't need admin rights.
+
+### Manual path — if you want to do it yourself
+
 ```bash
 # 1. Pin the Python version this project needs
 mise install python@3.10
